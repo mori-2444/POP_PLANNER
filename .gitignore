@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.Python
+
+log/
+config/
+parameter/
+FEET_CUBIC/
+
+.build/
+dist/
+build/
+*.spec
