@@ -427,9 +427,7 @@ class TrajectoryWorker(QtCore.QThread):
             primary_servo_id = servo_ids[0]
 
             per_servo_samples = {}
-            cycle_servo_samples = {}
             start_positions = {}
-            cycle_start_positions = {}
             backend_name = None
 
             position_mode_fixed_ids = []
@@ -446,38 +444,16 @@ class TrajectoryWorker(QtCore.QThread):
                     raise RuntimeError(packet_handler.getTxRxResult(comm_result))
                 if error != 0:
                     raise RuntimeError(packet_handler.getRxPacketError(error))
-                if mode_config["mode"] == MODE_RECIPROCATING:
-                    start_positions[servo_id] = ct.read_start_position(packet_handler, servo_id)
-                elif mode_config["mode"] == MODE_SINGLE and mode_config["use_current_position_as_start"]:
+                if mode_config["mode"] == MODE_SINGLE and mode_config["use_current_position_as_start"]:
                     start_positions[servo_id] = ct.read_start_position(packet_handler, servo_id)
                 else:
                     start_positions[servo_id] = mode_config["start_position"]
 
-                if mode_config["mode"] == MODE_RECIPROCATING:
-                    current_backend_name, samples = ct.build_segment_samples(
-                        start_positions[servo_id],
-                        mode_config["recip_end_position"],
-                        mode_config["start_velocity"],
-                        mode_config["end_velocity"],
-                        mode_config["trajectory_duration"],
-                        self.config["sample_interval"],
-                    )
-                    cycle_mode_config = copy.deepcopy(mode_config)
-                    cycle_mode_config["start_position"] = mode_config["recip_end_position"]
-                    cycle_mode_config["target_position"] = mode_config["start_position"]
-                    cycle_mode_config["recip_end_position"] = mode_config["start_position"]
-                    _cycle_backend_name, cycle_samples, _cycle_summary = ct.build_mode_samples(
-                        cycle_mode_config,
-                        self.config["sample_interval"],
-                    )
-                    cycle_servo_samples[servo_id] = cycle_samples
-                    cycle_start_positions[servo_id] = mode_config["recip_end_position"]
-                else:
-                    current_backend_name, samples, _summary = ct.build_mode_samples(
-                        mode_config,
-                        self.config["sample_interval"],
-                        start_override=start_positions[servo_id],
-                    )
+                current_backend_name, samples, _summary = ct.build_mode_samples(
+                    mode_config,
+                    self.config["sample_interval"],
+                    start_override=start_positions[servo_id],
+                )
                 if backend_name is None:
                     backend_name = current_backend_name
                 per_servo_samples[servo_id] = samples
@@ -488,6 +464,7 @@ class TrajectoryWorker(QtCore.QThread):
             self._log("Trajectory execution started")
             self.actual_sample.emit(0.0, float(start_positions[primary_servo_id]))
 
+            cycle_start_positions = dict(start_positions)
             reference_samples = per_servo_samples[primary_servo_id]
             segment_time_ms = int(round(self.config["sample_interval"] * 1000.0))
             should_repeat = self.config["mode"] == MODE_RECIPROCATING
@@ -548,22 +525,13 @@ class TrajectoryWorker(QtCore.QThread):
                     self.actual_sample.emit(sample_time, float(actual_position))
                 return True
 
-            if should_repeat:
+            if not run_sample_batch(per_servo_samples, reference_samples):
+                return
+
+            while should_repeat:
+                self.cycle_reset.emit(float(cycle_start_positions[primary_servo_id]))
                 if not run_sample_batch(per_servo_samples, reference_samples):
                     return
-                per_servo_samples = cycle_servo_samples
-                reference_samples = per_servo_samples[primary_servo_id]
-                start_positions = cycle_start_positions
-
-            while True:
-                if should_repeat:
-                    self.cycle_reset.emit(float(start_positions[primary_servo_id]))
-
-                if not run_sample_batch(per_servo_samples, reference_samples):
-                    return
-
-                if not should_repeat:
-                    break
 
             final_position, final_speed, comm_result, error = packet_handler.ReadPosSpeed(primary_servo_id)
             if comm_result == ct.COMM_SUCCESS and error == 0:

@@ -196,8 +196,8 @@ def build_mode_samples(mode_config, sample_interval, start_override=None):
     _backend_name, backward_samples = build_segment_samples(
         end_position,
         start_position,
-        mode_config["start_velocity"],
-        mode_config["end_velocity"],
+        -mode_config["end_velocity"],
+        -mode_config["start_velocity"],
         mode_config["trajectory_duration"],
         sample_interval,
         time_offset=mode_config["trajectory_duration"],
